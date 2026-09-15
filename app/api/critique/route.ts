@@ -88,49 +88,53 @@ Review the following ${portfolioType} submission.
 Submission information:
 ${content || "The portfolio is included in the attached file."}
 
-Return your critique using exactly these sections:
+Choose the response format based on the score.
+
+IF THE SCORE IS BETWEEN 95 AND 100:
 
 OVERALL SCORE
-Give a score out of 100 and briefly explain the score.
+Give the score and explain why the work is excellent.
 
 STRENGTHS
-List the specific things that were done well.
+Highlight the strongest parts of the work.
+
+FINAL VERDICT
+State that the work is professional, polished, and ready to present or publish.
+
+Do not include WEAKNESSES or NEXT STEPS for scores between 95 and 100.
+Do not invent problems just to provide criticism.
+
+IF THE SCORE IS BETWEEN 80 AND 94:
+
+OVERALL SCORE
+Give the score and a short explanation.
+
+STRENGTHS
+List the strongest parts of the work.
+
+MINOR REFINEMENTS
+Only mention small improvements that would make the work even better.
+
+IF THE SCORE IS BELOW 80:
+
+OVERALL SCORE
+Give the score and a short explanation.
+
+STRENGTHS
+List what was done well.
 
 WEAKNESSES
-List the specific problems or areas that need improvement.
+Explain the important problems.
 
 NEXT STEPS
-Give practical and prioritized steps the person should take to improve the portfolio.
+Give practical and prioritized steps for improvement.
 
-Be professional, honest, specific, constructive, and encouraging.
-
-Do not invent details that are not present in the submission.
-
-If only a link was supplied and you cannot inspect its content, clearly ask the user to upload the portfolio or paste the relevant code instead.
 IMPORTANT FORMATTING INSTRUCTION:
 
 Return plain text only.
-
-Do not use Markdown formatting.
+Do not use Markdown.
 Do not use #, ###, **, *, ---, underscores, tables, or code fences.
-
-Write section headings normally, like this:
-
-OVERALL SCORE
-Score: 75/100
-Explanation: ...
-
-STRENGTHS
-1. ...
-2. ...
-
-WEAKNESSES
-1. ...
-2. ...
-
-NEXT STEPS
-1. ...
-2. ...
+Do not invent weaknesses when the submitted work is already excellent.
 `;
 
     const input: GeminiInput[] = [
