@@ -51,7 +51,7 @@ export default function Home() {
                 href="/select-track"
                 className="bg-coral hover:bg-[#ff4356] text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm hover:shadow-md flex items-center gap-2"
               >
-                <span>Go to Dashboard</span>
+                <span>Dashboard</span>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                 </svg>

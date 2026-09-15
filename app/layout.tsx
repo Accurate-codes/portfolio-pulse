@@ -41,7 +41,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <ClerkProvider>
+        <ClerkProvider afterSignOutUrl="/">
           {children}
         </ClerkProvider>
       </body>
