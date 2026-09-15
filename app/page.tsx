@@ -33,7 +33,7 @@ export default function Home() {
           <div className="flex items-center gap-4">
             <Show when="signed-out">
               <SignInButton mode="modal">
-                <button className="text-sm font-semibold text-subtext hover:text-ink px-3 py-2 transition-colors cursor-pointer">
+                <button className="hidden sm:inline-flex text-sm font-semibold text-subtext hover:text-ink px-3 py-2 transition-colors cursor-pointer">
                   Sign In
                 </button>
               </SignInButton>
