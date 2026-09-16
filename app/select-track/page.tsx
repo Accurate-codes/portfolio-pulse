@@ -14,6 +14,58 @@ type CritiquePayload = {
   fileType?: string;
 };
 
+type CritiqueSection = { title: string; body: string };
+
+const SECTION_HEADERS = [
+  "OVERALL SCORE",
+  "STRENGTHS",
+  "WEAKNESSES",
+  "MINOR REFINEMENTS",
+  "NEXT STEPS",
+  "FINAL VERDICT",
+];
+
+function parseCritique(raw: string): { score: number | null; sections: CritiqueSection[] } {
+  const lines = raw.split("\n");
+  const sections: CritiqueSection[] = [];
+  let currentTitle: string | null = null;
+  let currentBody: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const matchedHeader = SECTION_HEADERS.find(
+      (header) => trimmed.toUpperCase() === header
+    );
+
+    if (matchedHeader) {
+      if (currentTitle) {
+        sections.push({ title: currentTitle, body: currentBody.join("\n").trim() });
+      }
+      currentTitle = matchedHeader;
+      currentBody = [];
+    } else if (currentTitle) {
+      currentBody.push(line);
+    }
+  }
+
+  if (currentTitle) {
+    sections.push({ title: currentTitle, body: currentBody.join("\n").trim() });
+  }
+
+  const scoreSection = sections.find((s) => s.title === "OVERALL SCORE");
+  const scoreMatch = scoreSection?.body.match(/(\d{1,3})\s*(?:\/\s*100)?/);
+  const score = scoreMatch ? parseInt(scoreMatch[1], 10) : null;
+
+  return { score, sections };
+}
+
+function bulletLines(body: string): string[] {
+  return body
+    .split("\n")
+    .map((line) => line.replace(/^•\s*/, "").trim())
+    .filter(Boolean);
+}
+
 export default function SelectTrack() {
   const [track, setTrack] = useState<Track>("design");
   const [isLoading, setIsLoading] = useState(false);
@@ -396,17 +448,107 @@ export default function SelectTrack() {
             )}
 
             {/* Critique result */}
-            {critique && (
-              <div className="mt-6 p-6 bg-emerald-50 border border-emerald-200 rounded-xl animate-fade-in">
-                <h2 className="font-display font-bold text-xl text-ink mb-3">
-                  Your critique
-                </h2>
+            {critique && (() => {
+              const { score, sections } = parseCritique(critique);
 
-                <div className="text-sm text-ink whitespace-pre-wrap leading-7">
-                  {critique}
+              return (
+                <div className="mt-6 border border-borderline rounded-2xl overflow-hidden animate-fade-in">
+                  {/* Score header */}
+                  {score !== null && (
+                    <div className="bg-ink px-6 py-5 flex items-center justify-between">
+                      <span className="text-white font-display font-bold text-lg">Your Critique</span>
+                      <div className="flex items-baseline gap-1 font-mono font-bold text-2xl text-white">
+                        <span className="text-coral">{score}</span>
+                        <span className="text-sm text-slate-300">/100</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-6 space-y-5 bg-white">
+                    {sections.map((section) => {
+                      if (section.title === "OVERALL SCORE") {
+                        return (
+                          <p key={section.title} className="text-sm text-subtext leading-relaxed">
+                            {section.body.replace(/^\d{1,3}\s*(?:\/\s*100)?[.:]?\s*/, "")}
+                          </p>
+                        );
+                      }
+
+                      if (section.title === "STRENGTHS") {
+                        return (
+                          <div key={section.title}>
+                            <h3 className="text-xs font-semibold text-success uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-success"></span>
+                              Strengths
+                            </h3>
+                            <ul className="space-y-1.5">
+                              {bulletLines(section.body).map((line, i) => (
+                                <li key={i} className="text-sm text-maintext flex items-start gap-2">
+                                  <span className="text-success shrink-0">✓</span>
+                                  <span>{line}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      }
+
+                      if (section.title === "WEAKNESSES" || section.title === "MINOR REFINEMENTS") {
+                        return (
+                          <div key={section.title}>
+                            <h3 className="text-xs font-semibold text-amber uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-amber"></span>
+                              {section.title === "WEAKNESSES" ? "Weaknesses" : "Minor Refinements"}
+                            </h3>
+                            <ul className="space-y-1.5">
+                              {bulletLines(section.body).map((line, i) => (
+                                <li key={i} className="text-sm text-maintext flex items-start gap-2">
+                                  <span className="text-amber shrink-0">!</span>
+                                  <span>{line}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      }
+
+                      if (section.title === "NEXT STEPS") {
+                        return (
+                          <div key={section.title}>
+                            <h3 className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">
+                              Next Steps
+                            </h3>
+                            <ol className="space-y-2">
+                              {bulletLines(section.body).map((line, i) => (
+                                <li key={i} className="text-sm text-maintext flex items-start gap-2.5">
+                                  <span className="w-5 h-5 rounded-full bg-ink text-white font-mono text-[10px] flex items-center justify-center shrink-0 mt-0.5 font-bold">
+                                    {i + 1}
+                                  </span>
+                                  <span>{line}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        );
+                      }
+
+                      if (section.title === "FINAL VERDICT") {
+                        return (
+                          <div key={section.title} className="p-4 bg-canvas border border-borderline rounded-xl">
+                            <h3 className="text-xs font-semibold text-ink uppercase tracking-wide mb-1.5">
+                              Final Verdict
+                            </h3>
+                            <p className="text-sm text-maintext leading-relaxed">{section.body}</p>
+                          </div>
+                        );
+                      }
+
+                      return null;
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       </div>
