@@ -1,5 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 
 type CritiqueRequest = {
   content?: string;
@@ -9,23 +9,7 @@ type CritiqueRequest = {
   fileType?: string;
 };
 
-type GeminiInput =
-  | {
-      type: "text";
-      text: string;
-    }
-  | {
-      type: "image";
-      data: string;
-      mime_type: string;
-    }
-  | {
-      type: "document";
-      data: string;
-      mime_type: "application/pdf";
-    };
-
-    function removeMarkdown(text: string) {
+function removeMarkdown(text: string) {
   return text
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
@@ -37,24 +21,18 @@ type GeminiInput =
     .trim();
 }
 
+export const FREE_CRITIQUE_LIMIT = 3;
+
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        {
-          error: "GEMINI_API_KEY is missing from .env.local.",
-        },
-        {
-          status: 500,
-        },
+        { error: "OPENROUTER_API_KEY is missing from .env.local." },
+        { status: 500 },
       );
     }
-
-    const ai = new GoogleGenAI({
-      apiKey,
-    });
 
     const {
       content = "",
@@ -64,21 +42,45 @@ export async function POST(request: Request) {
       fileType,
     } = (await request.json()) as CritiqueRequest;
 
+    // --- Usage limit check ---
+    const { userId } = await auth();
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: "You must be signed in to request a critique." },
+        { status: 401 },
+      );
+    }
+
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(userId);
+    const usedCount = (clerkUser.privateMetadata?.critiqueCount as number) || 0;
+
+    if (usedCount >= FREE_CRITIQUE_LIMIT) {
+      return NextResponse.json(
+        { error: "You've used all 3 free critiques. Upgrade to keep going." },
+        { status: 403 },
+      );
+    }
+    // --- End usage limit check ---
+
     if (!content.trim() && !fileData) {
       return NextResponse.json(
-        {
-          error: "Please provide a file, link, or code to critique.",
-        },
-        {
-          status: 400,
-        },
+        { error: "Please provide a file, link, or code to critique." },
+        { status: 400 },
+      );
+    }
+
+    // PDFs aren't reliably supported across OpenRouter's free vision models yet.
+    if (fileType === "application/pdf" || fileName?.toLowerCase().endsWith(".pdf")) {
+      return NextResponse.json(
+        { error: "PDF uploads aren't supported right now — please upload an image instead." },
+        { status: 400 },
       );
     }
 
     const portfolioType =
-      track === "dev"
-        ? "software development portfolio"
-        : "design portfolio";
+      track === "dev" ? "software development portfolio" : "design portfolio";
 
     const prompt = `
 You are an expert portfolio reviewer.
@@ -86,7 +88,7 @@ You are an expert portfolio reviewer.
 Review the following ${portfolioType} submission.
 
 Submission information:
-${content || "The portfolio is included in the attached file."}
+${content || "The portfolio is included in the attached image."}
 
 Choose the response format based on the score.
 
@@ -137,108 +139,78 @@ Do not use #, ###, **, *, ---, underscores, tables, or code fences.
 Do not invent weaknesses when the submitted work is already excellent.
 `;
 
-    const input: GeminiInput[] = [
-      {
-        type: "text",
-        text: prompt,
-      },
-    ];
+    // Build the message content array in OpenAI/OpenRouter's format.
+    const userContent: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    > = [{ type: "text", text: prompt }];
 
-    if (fileData) {
-      // The frontend sends files as data URLs:
-      // data:image/png;base64,ABC123...
-      // Gemini needs only the Base64 section after the comma.
-      const base64Data = fileData.includes(",")
-        ? fileData.split(",")[1]
-        : fileData;
-
-      if (!base64Data) {
-        return NextResponse.json(
-          {
-            error: "The uploaded file could not be processed.",
-          },
-          {
-            status: 400,
-          },
-        );
-      }
-
-      if (fileType?.startsWith("image/")) {
-        input.push({
-          type: "image",
-          data: base64Data,
-          mime_type: fileType,
-        });
-      } else if (
-        fileType === "application/pdf" ||
-        fileName?.toLowerCase().endsWith(".pdf")
-      ) {
-        input.push({
-          type: "document",
-          data: base64Data,
-          mime_type: "application/pdf",
-        });
-      } else {
-        return NextResponse.json(
-          {
-            error: "Only image and PDF uploads are currently supported.",
-          },
-          {
-            status: 400,
-          },
-        );
-      }
+    if (fileData && fileType?.startsWith("image/")) {
+      // fileData already arrives as a data URL (e.g. "data:image/png;base64,...")
+      // which OpenRouter accepts directly as image_url.url — no need to strip it.
+      userContent.push({ type: "image_url", image_url: { url: fileData } });
     }
 
-    const interaction = await ai.interactions.create({
-  model: "gemini-3.8-flash",
-  input,
-  system_instruction:
-    "You are an expert design and software development portfolio reviewer. Always return clean plain text without Markdown symbols.",
-});
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openrouter/free",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an expert design and software development portfolio reviewer. Always return clean plain text without Markdown symbols.",
+          },
+          {
+            role: "user",
+            content: userContent,
+          },
+        ],
+      }),
+    });
 
-const rawCritique = interaction.output_text;
-const critique = rawCritique ? removeMarkdown(rawCritique) : "";
+    const data = await response.json();
 
-if (!critique) {
-  throw new Error("Gemini returned an empty critique.");
-}
+    if (!response.ok) {
+      const message = data?.error?.message || "OpenRouter request failed.";
+      const isRateLimit = response.status === 429;
 
-return NextResponse.json({
-  critique,
-});
-  } catch (caughtError) {
-    console.error("Gemini critique error:", caughtError);
-
-    const message =
-      caughtError instanceof Error
-        ? caughtError.message
-        : "Failed to generate critique.";
-
-    const isRateLimit =
-      message.includes("429") ||
-      message.toLowerCase().includes("quota") ||
-      message.toLowerCase().includes("resource_exhausted");
-
-    if (isRateLimit) {
       return NextResponse.json(
         {
-          error:
-            "The free Gemini usage limit has been reached. Please wait for the limit to reset and try again.",
+          error: isRateLimit
+            ? "The free usage limit has been reached. Please wait a moment and try again."
+            : message,
         },
-        {
-          status: 429,
-        },
+        { status: response.status },
       );
     }
 
-    return NextResponse.json(
-      {
-        error: message,
-      },
-      {
-        status: 500,
-      },
-    );
+    const rawCritique: string | undefined = data?.choices?.[0]?.message?.content;
+    const critique = rawCritique ? removeMarkdown(rawCritique) : "";
+
+    if (!critique) {
+      throw new Error("The AI returned an empty critique.");
+    }
+
+    // Only count this against the user's free limit once we know it succeeded.
+    await client.users.updateUserMetadata(userId, {
+      privateMetadata: { critiqueCount: usedCount + 1 },
+    });
+
+    return NextResponse.json({
+      critique,
+      remaining: FREE_CRITIQUE_LIMIT - (usedCount + 1),
+    });
+  } catch (caughtError) {
+    console.error("OpenRouter critique error:", caughtError);
+
+    const message =
+      caughtError instanceof Error ? caughtError.message : "Failed to generate critique.";
+
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
