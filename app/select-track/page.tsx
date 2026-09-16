@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 
@@ -71,6 +71,7 @@ export default function SelectTrack() {
   const [isLoading, setIsLoading] = useState(false);
   const [critique, setCritique] = useState("");
   const [error, setError] = useState("");
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   // Design track state
   const [file, setFile] = useState<File | null>(null);
@@ -81,6 +82,17 @@ export default function SelectTrack() {
   // Development track state
   const [repoLink, setRepoLink] = useState("");
   const [codeSnippet, setCodeSnippet] = useState("");
+
+  // While a critique is generating, tick a counter every second so the
+  // button can show elapsed time instead of sitting static.
+  useEffect(() => {
+    if (!isLoading) return;
+    setElapsedSeconds(0);
+    const interval = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isLoading]);
 
   function clearResult() {
     setCritique("");
@@ -437,8 +449,14 @@ export default function SelectTrack() {
               onClick={handleSubmit}
               className="w-full mt-8 py-3.5 rounded-xl bg-coral text-white font-semibold text-sm hover:bg-[#ff4356] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-coral cursor-pointer"
             >
-              {isLoading ? "Reviewing your work..." : "Get my critique"}
+              {isLoading ? `Reviewing your work... (${elapsedSeconds}s)` : "Get my critique"}
             </button>
+
+            {isLoading && (
+              <p className="text-xs text-subtext text-center mt-3">
+                This usually takes under a minute — hang tight.
+              </p>
+            )}
 
             {/* Error message */}
             {error && (
