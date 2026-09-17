@@ -12,7 +12,16 @@ type CritiquePayload = {
   fileType?: string;
 };
 
-type CritiqueSection = { title: string; body: string };
+type CritiqueResponse = {
+  critique?: string;
+  score?: number | null;
+  error?: string;
+};
+
+type CritiqueSection = {
+  title: string;
+  body: string;
+};
 
 const SECTION_HEADERS = [
   "OVERALL SCORE",
@@ -23,22 +32,32 @@ const SECTION_HEADERS = [
   "FINAL VERDICT",
 ];
 
-function parseCritique(raw: string): { score: number | null; sections: CritiqueSection[] } {
+function parseCritique(raw: string): {
+  score: number | null;
+  sections: CritiqueSection[];
+} {
   const lines = raw.split("\n");
   const sections: CritiqueSection[] = [];
+
   let currentTitle: string | null = null;
   let currentBody: string[] = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
+    const normalizedLine = trimmed.replace(/:$/, "").toUpperCase();
+
     const matchedHeader = SECTION_HEADERS.find(
-      (header) => trimmed.toUpperCase() === header
+      (header) => normalizedLine === header,
     );
 
     if (matchedHeader) {
       if (currentTitle) {
-        sections.push({ title: currentTitle, body: currentBody.join("\n").trim() });
+        sections.push({
+          title: currentTitle,
+          body: currentBody.join("\n").trim(),
+        });
       }
+
       currentTitle = matchedHeader;
       currentBody = [];
     } else if (currentTitle) {
@@ -47,20 +66,40 @@ function parseCritique(raw: string): { score: number | null; sections: CritiqueS
   }
 
   if (currentTitle) {
-    sections.push({ title: currentTitle, body: currentBody.join("\n").trim() });
+    sections.push({
+      title: currentTitle,
+      body: currentBody.join("\n").trim(),
+    });
   }
 
-  const scoreSection = sections.find((s) => s.title === "OVERALL SCORE");
-  const scoreMatch = scoreSection?.body.match(/(\d{1,3})\s*(?:\/\s*100)?/);
-  const score = scoreMatch ? parseInt(scoreMatch[1], 10) : null;
+  const scoreSection = sections.find(
+    (section) => section.title === "OVERALL SCORE",
+  );
 
-  return { score, sections };
+  const scoreMatch = scoreSection?.body.match(
+    /(\d{1,3})\s*(?:\/\s*100|out of 100)?/i,
+  );
+
+  const score = scoreMatch
+    ? Math.min(Math.max(parseInt(scoreMatch[1], 10), 0), 100)
+    : null;
+
+  return {
+    score,
+    sections,
+  };
 }
 
 function bulletLines(body: string): string[] {
   return body
     .split("\n")
-    .map((line) => line.replace(/^•\s*/, "").trim())
+    .map((line) =>
+      line
+        .replace(/^•\s*/, "")
+        .replace(/^[-*]\s*/, "")
+        .replace(/^\d+[.)]\s*/, "")
+        .trim(),
+    )
     .filter(Boolean);
 }
 
@@ -81,15 +120,18 @@ export default function SelectTrack() {
   const [repoLink, setRepoLink] = useState("");
   const [codeSnippet, setCodeSnippet] = useState("");
 
-  // While a critique is generating, tick a counter every second so the
-  // button can show elapsed time instead of sitting static.
   useEffect(() => {
-    if (!isLoading) return;
+    if (!isLoading) {
+      return;
+    }
+
     setElapsedSeconds(0);
-    const interval = setInterval(() => {
-      setElapsedSeconds((prev) => prev + 1);
+
+    const interval = window.setInterval(() => {
+      setElapsedSeconds((previous) => previous + 1);
     }, 1000);
-    return () => clearInterval(interval);
+
+    return () => window.clearInterval(interval);
   }, [isLoading]);
 
   function clearResult() {
@@ -119,9 +161,18 @@ export default function SelectTrack() {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
 
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () =>
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          resolve(reader.result);
+          return;
+        }
+
+        reject(new Error("The selected file could not be converted."));
+      };
+
+      reader.onerror = () => {
         reject(new Error("The selected file could not be read."));
+      };
 
       reader.readAsDataURL(selectedFile);
     });
@@ -137,15 +188,21 @@ export default function SelectTrack() {
       if (track === "design") {
         content = [
           "Review this design portfolio and provide a detailed professional critique.",
-          figmaLink ? `Public Figma link: ${figmaLink}` : "",
+          figmaLink
+            ? `Public Figma link: ${figmaLink.trim()}`
+            : "",
         ]
           .filter(Boolean)
           .join("\n\n");
       } else {
         content = [
           "Review this software development portfolio submission.",
-          repoLink ? `Public GitHub repository: ${repoLink}` : "",
-          codeSnippet ? `Code submission:\n${codeSnippet}` : "",
+          repoLink
+            ? `Public GitHub repository: ${repoLink.trim()}`
+            : "",
+          codeSnippet
+            ? `Code submission:\n${codeSnippet.trim()}`
+            : "",
         ]
           .filter(Boolean)
           .join("\n\n");
@@ -170,14 +227,40 @@ export default function SelectTrack() {
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+
+      if (!responseText) {
+        throw new Error(
+          `The server returned an empty response. Status: ${response.status}.`,
+        );
+      }
+
+      let data: CritiqueResponse;
+
+      try {
+        data = JSON.parse(responseText) as CritiqueResponse;
+      } catch {
+        console.error("Invalid server response:", responseText);
+
+        throw new Error(
+          "The server returned an invalid response. Check your terminal or Vercel logs.",
+        );
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to generate critique.Try Again");
+        throw new Error(
+          data.error || "Failed to generate critique. Please try again.",
+        );
+      }
+
+      if (!data.critique) {
+        throw new Error("The server did not return a critique.");
       }
 
       setCritique(data.critique);
     } catch (caughtError) {
+      console.error("Critique submission error:", caughtError);
+
       setError(
         caughtError instanceof Error
           ? caughtError.message
@@ -196,11 +279,11 @@ export default function SelectTrack() {
   return (
     <div className="flex flex-col items-center px-6 py-16">
       {/* Track selector */}
-      <div className="bg-zinc-900 rounded-full p-1.5 flex items-center gap-1 mb-10 shadow-sm">
+      <div className="mb-10 flex items-center gap-1 rounded-full bg-zinc-900 p-1.5 shadow-sm">
         <button
           type="button"
           onClick={() => changeTrack("design")}
-          className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-colors duration-300 cursor-pointer ${
+          className={`cursor-pointer rounded-full px-6 py-2.5 text-sm font-semibold transition-colors duration-300 ${
             track === "design"
               ? "bg-coral text-white"
               : "text-zinc-300 hover:text-white"
@@ -212,7 +295,7 @@ export default function SelectTrack() {
         <button
           type="button"
           onClick={() => changeTrack("dev")}
-          className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-colors duration-300 cursor-pointer ${
+          className={`cursor-pointer rounded-full px-6 py-2.5 text-sm font-semibold transition-colors duration-300 ${
             track === "dev"
               ? "bg-dev-accent text-white"
               : "text-zinc-300 hover:text-white"
@@ -222,24 +305,24 @@ export default function SelectTrack() {
         </button>
       </div>
 
-      <div className="max-w-2xl w-full">
+      <div className="w-full max-w-2xl">
         <div
           key={track}
-          className="animate-fade-in bg-white border border-borderline rounded-2xl shadow-sm p-8"
+          className="animate-fade-in rounded-2xl border border-borderline bg-white p-8 shadow-sm"
         >
           {track === "design" ? (
             <>
-              <div className="text-center mb-8">
-                <h1 className="font-display font-bold text-2xl text-ink mb-2">
+              <div className="mb-8 text-center">
+                <h1 className="mb-2 font-display text-2xl font-bold text-ink">
                   Design Upload
                 </h1>
 
-                <p className="text-subtext text-sm">
-                  Upload an image or PDF, or paste a public Figma link.
+                <p className="text-sm text-subtext">
+                  Upload an image or paste a public Figma link.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 {/* File upload */}
                 <div
                   onDragOver={(event) => {
@@ -248,7 +331,7 @@ export default function SelectTrack() {
                   }}
                   onDragLeave={() => setIsDragging(false)}
                   onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center text-center min-h-[220px] transition-colors ${
+                  className={`flex min-h-[220px] flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
                     isDragging
                       ? "border-design-accent bg-pink-50/40"
                       : "border-borderline"
@@ -257,7 +340,7 @@ export default function SelectTrack() {
                   {file ? (
                     <>
                       <svg
-                        className="w-8 h-8 text-design-accent mb-3"
+                        className="mb-3 h-8 w-8 text-design-accent"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -270,7 +353,7 @@ export default function SelectTrack() {
                         />
                       </svg>
 
-                      <p className="text-sm font-semibold text-ink mb-1 break-all">
+                      <p className="mb-1 break-all text-sm font-semibold text-ink">
                         {file.name}
                       </p>
 
@@ -280,23 +363,23 @@ export default function SelectTrack() {
                           setFile(null);
                           clearResult();
                         }}
-                        className="text-xs text-subtext hover:text-coral underline mt-1 cursor-pointer"
+                        className="mt-1 cursor-pointer text-xs text-subtext underline hover:text-coral"
                       >
                         Remove
                       </button>
                     </>
                   ) : (
                     <>
-                      <p className="text-sm text-subtext mb-1">
-                        Drag a file to upload
+                      <p className="mb-1 text-sm text-subtext">
+                        Drag an image to upload
                       </p>
 
-                      <p className="text-xs text-subtext mb-4">or</p>
+                      <p className="mb-4 text-xs text-subtext">or</p>
 
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="bg-ink hover:bg-navy text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+                        className="cursor-pointer rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy"
                       >
                         Browse file
                       </button>
@@ -304,7 +387,7 @@ export default function SelectTrack() {
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*,.pdf"
+                        accept="image/*"
                         className="hidden"
                         onChange={(event) =>
                           handleFileSelect(event.target.files)
@@ -315,10 +398,10 @@ export default function SelectTrack() {
                 </div>
 
                 {/* Figma input */}
-                <div className="border border-borderline rounded-xl p-6 flex flex-col justify-center min-h-[220px]">
+                <div className="flex min-h-[220px] flex-col justify-center rounded-xl border border-borderline p-6">
                   <label
                     htmlFor="figma-link"
-                    className="text-sm font-semibold text-ink mb-2"
+                    className="mb-2 text-sm font-semibold text-ink"
                   >
                     Paste Figma link
                   </label>
@@ -332,10 +415,10 @@ export default function SelectTrack() {
                       setFigmaLink(event.target.value);
                       clearResult();
                     }}
-                    className="w-full border border-borderline rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-subtext/60 focus:outline-none focus:ring-2 focus:ring-design-accent/40 focus:border-design-accent"
+                    className="w-full rounded-lg border border-borderline px-3 py-2.5 text-sm text-ink placeholder:text-subtext/60 focus:border-design-accent focus:outline-none focus:ring-2 focus:ring-design-accent/40"
                   />
 
-                  <p className="text-xs text-subtext mt-2">
+                  <p className="mt-2 text-xs text-subtext">
                     Make sure link sharing is turned on.
                   </p>
                 </div>
@@ -343,25 +426,25 @@ export default function SelectTrack() {
             </>
           ) : (
             <>
-              <div className="text-center mb-8">
-                <h1 className="font-display font-bold text-2xl text-ink mb-2">
+              <div className="mb-8 text-center">
+                <h1 className="mb-2 font-display text-2xl font-bold text-ink">
                   Development Upload
                 </h1>
 
-                <p className="text-subtext text-sm">
+                <p className="text-sm text-subtext">
                   Paste a public GitHub repository link or a code snippet.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 {/* GitHub input */}
-                <div className="border border-borderline rounded-xl p-6 flex flex-col justify-center min-h-[220px]">
+                <div className="flex min-h-[220px] flex-col justify-center rounded-xl border border-borderline p-6">
                   <label
                     htmlFor="repo-link"
-                    className="text-sm font-semibold text-ink mb-2 flex items-center gap-2"
+                    className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink"
                   >
                     <svg
-                      className="w-4 h-4 text-dev-accent"
+                      className="h-4 w-4 text-dev-accent"
                       fill="currentColor"
                       viewBox="0 0 24 24"
                     >
@@ -380,19 +463,19 @@ export default function SelectTrack() {
                       setRepoLink(event.target.value);
                       clearResult();
                     }}
-                    className="w-full border border-borderline rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-subtext/60 focus:outline-none focus:ring-2 focus:ring-dev-accent/40 focus:border-dev-accent"
+                    className="w-full rounded-lg border border-borderline px-3 py-2.5 text-sm text-ink placeholder:text-subtext/60 focus:border-dev-accent focus:outline-none focus:ring-2 focus:ring-dev-accent/40"
                   />
 
-                  <p className="text-xs text-subtext mt-2">
-                    Make sure the repo is public.
+                  <p className="mt-2 text-xs text-subtext">
+                    Make sure the repository is public.
                   </p>
                 </div>
 
                 {/* Code input */}
-                <div className="border border-borderline rounded-xl p-6 flex flex-col min-h-[220px]">
+                <div className="flex min-h-[220px] flex-col rounded-xl border border-borderline p-6">
                   <label
                     htmlFor="code-snippet"
-                    className="text-sm font-semibold text-ink mb-2"
+                    className="mb-2 text-sm font-semibold text-ink"
                   >
                     Paste a code snippet
                   </label>
@@ -405,7 +488,7 @@ export default function SelectTrack() {
                       setCodeSnippet(event.target.value);
                       clearResult();
                     }}
-                    className="w-full flex-1 border border-borderline rounded-lg px-3 py-2.5 text-sm font-mono text-ink placeholder:text-subtext/60 placeholder:font-sans resize-none focus:outline-none focus:ring-2 focus:ring-dev-accent/40 focus:border-dev-accent"
+                    className="w-full flex-1 resize-none rounded-lg border border-borderline px-3 py-2.5 font-mono text-sm text-ink placeholder:font-sans placeholder:text-subtext/60 focus:border-dev-accent focus:outline-none focus:ring-2 focus:ring-dev-accent/40"
                   />
                 </div>
               </div>
@@ -417,126 +500,173 @@ export default function SelectTrack() {
             type="button"
             disabled={!canSubmit || isLoading}
             onClick={handleSubmit}
-            className="w-full mt-8 py-3.5 rounded-xl bg-coral text-white font-semibold text-sm hover:bg-[#ff4356] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-coral cursor-pointer"
+            className="mt-8 w-full cursor-pointer rounded-xl bg-coral py-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#ff4356] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-coral"
           >
-            {isLoading ? `Reviewing your work... (${elapsedSeconds}s)` : "Get my critique"}
+            {isLoading
+              ? `Reviewing your work... (${elapsedSeconds}s)`
+              : "Get my critique"}
           </button>
 
           {isLoading && (
-            <p className="text-xs text-subtext text-center mt-3">
-              This usually takes under a minute — hang tight.
+            <p className="mt-3 text-center text-xs text-subtext">
+              This usually takes under a minute—hang tight.
             </p>
           )}
 
           {/* Error message */}
           {error && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {error}
             </div>
           )}
 
           {/* Critique result */}
-          {critique && (() => {
-            const { score, sections } = parseCritique(critique);
+          {critique &&
+            (() => {
+              const { score, sections } = parseCritique(critique);
 
-            return (
-              <div className="mt-6 border border-borderline rounded-2xl overflow-hidden animate-fade-in">
-                {/* Score header */}
-                {score !== null && (
-                  <div className="bg-ink px-6 py-5 flex items-center justify-between">
-                    <span className="text-white font-display font-bold text-lg">Your Critique</span>
-                    <div className="flex items-baseline gap-1 font-mono font-bold text-2xl text-white">
-                      <span className="text-coral">{score}</span>
-                      <span className="text-sm text-slate-300">/100</span>
+              return (
+                <div className="animate-fade-in mt-6 overflow-hidden rounded-2xl border border-borderline">
+                  {score !== null && (
+                    <div className="flex items-center justify-between bg-ink px-6 py-5">
+                      <span className="font-display text-lg font-bold text-white">
+                        Your Critique
+                      </span>
+
+                      <div className="flex items-baseline gap-1 font-mono text-2xl font-bold text-white">
+                        <span className="text-coral">{score}</span>
+                        <span className="text-sm text-slate-300">
+                          /100
+                        </span>
+                      </div>
                     </div>
+                  )}
+
+                  <div className="space-y-5 bg-white p-6">
+                    {sections.map((section) => {
+                      if (section.title === "OVERALL SCORE") {
+                        return (
+                          <p
+                            key={section.title}
+                            className="text-sm leading-relaxed text-subtext"
+                          >
+                            {section.body.replace(
+                              /^\d{1,3}\s*(?:\/\s*100|out of 100)?[.:]?\s*/i,
+                              "",
+                            )}
+                          </p>
+                        );
+                      }
+
+                      if (section.title === "STRENGTHS") {
+                        return (
+                          <div key={section.title}>
+                            <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-success">
+                              <span className="h-2 w-2 rounded-full bg-success" />
+                              Strengths
+                            </h3>
+
+                            <ul className="space-y-1.5">
+                              {bulletLines(section.body).map(
+                                (line, index) => (
+                                  <li
+                                    key={`${line}-${index}`}
+                                    className="flex items-start gap-2 text-sm text-maintext"
+                                  >
+                                    <span className="shrink-0 text-success">
+                                      ✓
+                                    </span>
+                                    <span>{line}</span>
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        );
+                      }
+
+                      if (
+                        section.title === "WEAKNESSES" ||
+                        section.title === "MINOR REFINEMENTS"
+                      ) {
+                        return (
+                          <div key={section.title}>
+                            <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber">
+                              <span className="h-2 w-2 rounded-full bg-amber" />
+
+                              {section.title === "WEAKNESSES"
+                                ? "Weaknesses"
+                                : "Minor Refinements"}
+                            </h3>
+
+                            <ul className="space-y-1.5">
+                              {bulletLines(section.body).map(
+                                (line, index) => (
+                                  <li
+                                    key={`${line}-${index}`}
+                                    className="flex items-start gap-2 text-sm text-maintext"
+                                  >
+                                    <span className="shrink-0 text-amber">
+                                      !
+                                    </span>
+                                    <span>{line}</span>
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        );
+                      }
+
+                      if (section.title === "NEXT STEPS") {
+                        return (
+                          <div key={section.title}>
+                            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink">
+                              Next Steps
+                            </h3>
+
+                            <ol className="space-y-2">
+                              {bulletLines(section.body).map(
+                                (line, index) => (
+                                  <li
+                                    key={`${line}-${index}`}
+                                    className="flex items-start gap-2.5 text-sm text-maintext"
+                                  >
+                                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-ink font-mono text-[10px] font-bold text-white">
+                                      {index + 1}
+                                    </span>
+                                    <span>{line}</span>
+                                  </li>
+                                ),
+                              )}
+                            </ol>
+                          </div>
+                        );
+                      }
+
+                      if (section.title === "FINAL VERDICT") {
+                        return (
+                          <div
+                            key={section.title}
+                            className="rounded-xl border border-borderline bg-canvas p-4"
+                          >
+                            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink">
+                              Final Verdict
+                            </h3>
+
+                            <p className="text-sm leading-relaxed text-maintext">
+                              {section.body}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return null;
+                    })}
                   </div>
-                )}
-
-                <div className="p-6 space-y-5 bg-white">
-                  {sections.map((section) => {
-                    if (section.title === "OVERALL SCORE") {
-                      return (
-                        <p key={section.title} className="text-sm text-subtext leading-relaxed">
-                          {section.body.replace(/^\d{1,3}\s*(?:\/\s*100)?[.:]?\s*/, "")}
-                        </p>
-                      );
-                    }
-
-                    if (section.title === "STRENGTHS") {
-                      return (
-                        <div key={section.title}>
-                          <h3 className="text-xs font-semibold text-success uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-success"></span>
-                            Strengths
-                          </h3>
-                          <ul className="space-y-1.5">
-                            {bulletLines(section.body).map((line, i) => (
-                              <li key={i} className="text-sm text-maintext flex items-start gap-2">
-                                <span className="text-success shrink-0">✓</span>
-                                <span>{line}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      );
-                    }
-
-                    if (section.title === "WEAKNESSES" || section.title === "MINOR REFINEMENTS") {
-                      return (
-                        <div key={section.title}>
-                          <h3 className="text-xs font-semibold text-amber uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-amber"></span>
-                            {section.title === "WEAKNESSES" ? "Weaknesses" : "Minor Refinements"}
-                          </h3>
-                          <ul className="space-y-1.5">
-                            {bulletLines(section.body).map((line, i) => (
-                              <li key={i} className="text-sm text-maintext flex items-start gap-2">
-                                <span className="text-amber shrink-0">!</span>
-                                <span>{line}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      );
-                    }
-
-                    if (section.title === "NEXT STEPS") {
-                      return (
-                        <div key={section.title}>
-                          <h3 className="text-xs font-semibold text-ink uppercase tracking-wide mb-2">
-                            Next Steps
-                          </h3>
-                          <ol className="space-y-2">
-                            {bulletLines(section.body).map((line, i) => (
-                              <li key={i} className="text-sm text-maintext flex items-start gap-2.5">
-                                <span className="w-5 h-5 rounded-full bg-ink text-white font-mono text-[10px] flex items-center justify-center shrink-0 mt-0.5 font-bold">
-                                  {i + 1}
-                                </span>
-                                <span>{line}</span>
-                              </li>
-                            ))}
-                          </ol>
-                        </div>
-                      );
-                    }
-
-                    if (section.title === "FINAL VERDICT") {
-                      return (
-                        <div key={section.title} className="p-4 bg-canvas border border-borderline rounded-xl">
-                          <h3 className="text-xs font-semibold text-ink uppercase tracking-wide mb-1.5">
-                            Final Verdict
-                          </h3>
-                          <p className="text-sm text-maintext leading-relaxed">{section.body}</p>
-                        </div>
-                      );
-                    }
-
-                    return null;
-                  })}
                 </div>
-              </div>
-            );
-          })()}
+              );
+            })()}
         </div>
       </div>
     </div>
