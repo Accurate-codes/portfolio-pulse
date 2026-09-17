@@ -126,16 +126,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-canvas">
       {!isDesktop && (
         <>
-          <button
-            type="button"
-            onClick={() => setIsMobileOpen((open) => !open)}
-            className="fixed left-4 top-4 z-50 flex h-11 w-11 items-center justify-center rounded-xl bg-ink text-white shadow-lg transition-transform duration-200 hover:scale-105 lg:hidden"
-            aria-label="Toggle navigation menu"
-          >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
+          <div className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-canvas/90 px-4 backdrop-blur-sm lg:hidden">
+            <Link href="/" className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink p-1.5">
+                <svg viewBox="0 0 32 32" fill="none" className="h-full w-full stroke-coral stroke-[2.5]">
+                  <path d="M4 16h6l3-8 5 16 4-11 3 5 4-2h3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span className="font-display text-base font-bold tracking-tight text-ink">
+                Portfolio<span className="text-coral">Pulse</span>
+              </span>
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => setIsMobileOpen((open) => !open)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-ink text-white shadow-lg transition-transform duration-200 hover:scale-105"
+              aria-label="Toggle navigation menu"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
 
           {isMobileOpen && (
             <button
